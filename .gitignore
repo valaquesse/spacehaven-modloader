@@ -12,3 +12,6 @@ previous_spacehaven_path.txt
 quicklaunch_*.jar
 quicklaunch_*/
 extra_mods_path.txt
+env/
+.vscode/.ropeproject/
+.vscode/settings.json

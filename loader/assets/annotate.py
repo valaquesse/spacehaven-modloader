@@ -21,10 +21,11 @@ def annotate(corePath):
         if not asset_id in texture_names:
             continue
         assetPos.set('_annotation', texture_names[asset_id])
+
     
     annotatedPath = os.path.join(corePath, "library", "animations_annotated.xml")
     animations.write(annotatedPath)
-    ui.log.log("    Wrote annotated annimations to {}".format(annotatedPath))
+    ui.log.log("  Wrote annotated annimations to {}".format(annotatedPath))
     
     haven = ElementTree.parse(os.path.join(corePath, "library", "haven"), parser=XMLParser(recover=True))
     texts = ElementTree.parse(os.path.join(corePath, "library", "texts"), parser=XMLParser(recover=True))
@@ -147,4 +148,4 @@ def annotate(corePath):
     
     annotatedHavenPath = os.path.join(corePath, "library", "haven_annotated.xml")
     haven.write(annotatedHavenPath)
-    ui.log.log("    Wrote annotated spacehaven library to {}".format(annotatedHavenPath))
+    ui.log.log("  Wrote annotated spacehaven library to {}".format(annotatedHavenPath))

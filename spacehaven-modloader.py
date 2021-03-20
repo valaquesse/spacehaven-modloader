@@ -5,6 +5,8 @@ import subprocess
 import threading
 import traceback
 
+from collections import OrderedDict
+from steamfiles import acf
 from tkinter import filedialog
 from tkinter import messagebox
 from tkinter import *
@@ -18,6 +20,8 @@ import loader.extract
 import loader.load
 
 import version
+import winreg
+import platform
 
 POSSIBLE_SPACEHAVEN_LOCATIONS = [
     # MacOS
@@ -41,6 +45,7 @@ POSSIBLE_SPACEHAVEN_LOCATIONS = [
     "~/Games/SpaceHaven/spacehaven",
     ".local/share/Steam/steamapps/common/SpaceHaven/spacehaven",
 ]
+DatabaseHandler = ui.database.ModDatabase
 
 class Window(Frame):
     def __init__(self, master=None):
@@ -147,17 +152,31 @@ class Window(Frame):
         self.jarPath = None
         self.modPath = None
         
+        # Open previous location if known
         try:
             with open("previous_spacehaven_path.txt", 'r') as f:
                 location = f.read()
                 if os.path.exists(location):
                     self.locateSpacehaven(location)
                     return
-        except:
-            import traceback
-            traceback.print_exc()
-            pass
+        except FileNotFoundError:
+            ui.log.log("Unable to get last space haven location. Autolocating again.")
         
+        # Steam based locator (Windows)
+        try:
+            registry_path = "SOFTWARE\\WOW6432Node\\Valve\\Steam" if (platform.architecture()[0] == "64bit") else "SOFTWARE\\Valve\\Steam"
+            steam_path = winreg.QueryValueEx(winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, registry_path), "InstallPath")[0]
+            library_folders = acf.load(open(steam_path + "\\steamapps\\libraryfolders.vdf"), wrapper=OrderedDict)
+            locations = [steam_path + "\\steamapps\\common\\SpaceHaven\\spacehaven.exe"]
+            for key, value in library_folders["LibraryFolders"].items():
+                if str.isnumeric(key): locations.append(value + "\\steamapps\\common\\SpaceHaven\\spacehaven.exe")
+            for location in locations:
+                if os.path.exists(location):
+                    self.locateSpacehaven(location)
+                    return
+        except FileNotFoundError:
+            ui.log.log("Unable to locate Steam registry keys, aborting Steam autolocator")
+
         for location in POSSIBLE_SPACEHAVEN_LOCATIONS:
             try: 
                 location = os.path.abspath(location)
@@ -166,7 +185,8 @@ class Window(Frame):
                     return
             except:
                 pass
-    
+        ui.log.log("Unable to autolocate installation. User will need to pick manually.")
+
     def locateSpacehaven(self, path):
         if path is None:
             return
@@ -215,6 +235,7 @@ class Window(Frame):
         except:
             pass
         
+        DatabaseHandler(self.modPath, self.gameInfo)
         self.refreshModList()
 
     def checkForLoadedMods(self):
@@ -260,10 +281,10 @@ class Window(Frame):
             self.showModError("Spacehaven not found", "Please use the 'Find game' button below to locate Spacehaven.")
             return
 
-        self.modDatabase = ui.database.ModDatabase(self.modPath, self.gameInfo)
+        DatabaseHandler.getInstance().locateMods()
         
         mod_idx = 0
-        for mod in self.modDatabase.mods:
+        for mod in DatabaseHandler.getRegisteredMods():
             self.modList.insert(END, mod.name)
             mod.display_idx = mod_idx
             
@@ -282,7 +303,7 @@ class Window(Frame):
             self.modList.itemconfig(mod.display_idx, foreground = 'grey', selectforeground = 'lightgrey')
     
     def selected_mod(self):
-        if not len(self.modDatabase.mods):
+        if DatabaseHandler.getInstance().isEmpty():
             return None
         if len(self.modList.curselection()) == 0:
             self.modList.selection_set(0)
@@ -290,7 +311,7 @@ class Window(Frame):
         else:
             selected = self.modList.curselection()[0]
         
-        return self.modDatabase.mods[self.modList.curselection()[0]]
+        return DatabaseHandler.getRegisteredMods()[self.modList.curselection()[0]]
             
     def showCurrentMod(self, _arg=None):
         self.showMod(self.selected_mod())
@@ -328,16 +349,7 @@ class Window(Frame):
         
         self.modDetailsName.config(text = title)
         self.modEnableDisable.config(text = command_label)
-        description = mod.description
-        if mod.known_issues:
-            description += "\n\n" + "KNOWN ISSUES: " + mod.known_issues
-        if mod.author:
-            description += "\n\n" + "AUTHOR: " + mod.author
-        if mod.website:
-            # FIXME make it a separate textfield, can't select from this one
-            description += "\n\n" + "URL: " + mod.website
-        
-        self.update_description(description)
+        self.update_description(mod.getDescription())
     
     def showModError(self, title, error):
         self.modDetailsName.config(text = title)
@@ -415,13 +427,17 @@ class Window(Frame):
     
     def annotate(self):
         corePath = self._core_extract_path()
-        
-        loader.assets.annotate.annotate(corePath)
+        ui.log.log(f"Annotating and putting files in {corePath}")
+        try:
+            loader.assets.annotate.annotate(corePath)
+        except Exception as e:
+            ui.log.log("  Error during annotation!")
+            ui.log.log(repr(e))
         
         ui.launcher.open(os.path.join(corePath, 'library'))
     
     def mods_enabled(self):
-        return [mod for mod in self.modDatabase.mods if mod.enabled]
+        return DatabaseHandler.getActiveMods()
     
     def current_mods_signature(self):
         import hashlib
@@ -487,11 +503,7 @@ class Window(Frame):
             messagebox.showerror("Error during quick launch", traceback.format_exc(3))
     
     def patchAndLaunch(self):
-        activeModPaths = []
-        for mod in self.modDatabase.mods:
-            if not mod.enabled:
-                continue
-            activeModPaths.append(mod.path)
+        activeModPaths = [mod.path for mod in DatabaseHandler.getActiveMods()]
         
         try:
             loader.load.load(self.jarPath, activeModPaths, self.current_mods_signature())
